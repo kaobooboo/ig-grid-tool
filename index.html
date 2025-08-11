@@ -1,79 +1,440 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-Hant">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>IG 排版小工具</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IG 排版小網頁 – 完整版</title>
+  <!-- Tailwind -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script crossorigin src="https://unpkg.com/react@17/umd/react.development.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+  <!-- React 18 UMD -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <!-- Babel（讓我們能直接在瀏覽器用 JSX） -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
-<body class="bg-gray-100 p-4">
+<body class="bg-neutral-100">
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useRef, useEffect } = React;
+    const { useEffect, useRef, useState } = React;
+    const LS_KEY = "ig-grid-auto";
 
-    function App() {
-      const [images, setImages] = useState(() => {
-        const saved = localStorage.getItem("igGridImages");
-        return saved ? JSON.parse(saved) : [];
-      });
-      const fileRef = useRef();
+    function IGGridApp() {
+      // 狀態
+      const [images, setImages] = useState([]); // {id, url}
+      const [cols, setCols] = useState(3);
+      const [gap, setGap] = useState(8);
+      const [bg, setBg] = useState("white");
+      const [showIndex, setShowIndex] = useState(true);
+      const [ratio, setRatio] = useState("1:1"); // 1:1 | 4:5 | 16:9 | 9:16 | original
+      const [round, setRound] = useState(true);
+      const [replaceIndex, setReplaceIndex] = useState(null);
+      const fileInputRef = useRef(null);
+      const [showBackup, setShowBackup] = useState(false);
+      const [backupText, setBackupText] = useState("");
 
+      // 自動載入
       useEffect(() => {
-        localStorage.setItem("igGridImages", JSON.stringify(images));
-      }, [images]);
+        try {
+          const raw = localStorage.getItem(LS_KEY);
+          if (!raw) return;
+          const data = JSON.parse(raw);
+          if (Array.isArray(data.images)) setImages(data.images);
+          const s = data.settings || {};
+          if (s.cols) setCols(s.cols);
+          if (typeof s.gap === 'number') setGap(s.gap);
+          if (s.bg) setBg(s.bg);
+          if (typeof s.showIndex === 'boolean') setShowIndex(s.showIndex);
+          if (s.ratio) setRatio(s.ratio);
+          if (typeof s.round === 'boolean') setRound(s.round);
+        } catch {}
+      }, []);
 
-      function handleFiles(e) {
-        const files = Array.from(e.target.files);
-        const readers = files.map(file => {
-          return new Promise(res => {
-            const reader = new FileReader();
-            reader.onload = ev => res({ id: Date.now() + Math.random(), src: ev.target.result });
-            reader.readAsDataURL(file);
-          });
+      // 自動保存
+      useEffect(() => {
+        try {
+          const payload = { images, settings: { cols, gap, bg, showIndex, ratio, round } };
+          localStorage.setItem(LS_KEY, JSON.stringify(payload));
+        } catch {}
+      }, [images, cols, gap, bg, showIndex, ratio, round]);
+
+      // 新增圖片
+      async function addFiles(files) {
+        const list = Array.from(files || []);
+        if (!list.length) return;
+        const items = await Promise.all(
+          list.map(f => new Promise(res => {
+            const r = new FileReader();
+            r.onload = () => res({ id: crypto?.randomUUID?.() ?? String(Math.random()), url: r.result });
+            r.readAsDataURL(f);
+          }))
+        );
+        setImages(prev => [...prev, ...items]);
+      }
+
+      // 替換單格
+      function replaceFilesAt(index, files) {
+        const list = Array.from(files || []); if (!list.length) return;
+        const f = list[0]; const r = new FileReader();
+        r.onload = () => setImages(prev => prev.map((it, i) => i === index ? { ...it, url: r.result } : it));
+        r.readAsDataURL(f);
+      }
+
+      // DnD：整區新增 / 指定格替換
+      function onDropFiles(e, targetIndex = null) {
+        e.preventDefault();
+        const files = Array.from(e.dataTransfer?.files || []);
+        if (!files.length) return;
+        if (targetIndex !== null) { replaceFilesAt(targetIndex, files); return; }
+        addFiles(files);
+      }
+
+      // input 選檔
+      function onFilesSelected(e) {
+        const files = e.target.files;
+        if (!files || !files.length) return;
+        if (replaceIndex !== null) {
+          replaceFilesAt(replaceIndex, files);
+          setReplaceIndex(null);
+          e.target.value = "";
+          return;
+        }
+        addFiles(files);
+        e.target.value = "";
+      }
+
+      // 拖曳把手重排
+      function onCardDragStart(e, fromIndex) {
+        e.dataTransfer.effectAllowed = "move";
+        try { e.dataTransfer.setData('text/ig-card', String(fromIndex)); } catch {}
+      }
+      function onCardDrop(e, overIndex) {
+        e.preventDefault();
+        const files = e.dataTransfer?.files;
+        if (files && files.length) { replaceFilesAt(overIndex, files); return; }
+        const payload = e.dataTransfer.getData('text/ig-card');
+        if (payload !== null && payload !== '') {
+          const fromIndex = Number(payload);
+          if (Number.isInteger(fromIndex) && fromIndex !== overIndex) {
+            setImages(prev => { const next = [...prev]; const [moved] = next.splice(fromIndex, 1); next.splice(overIndex, 0, moved); return next; });
+          }
+        }
+      }
+
+      // 刪除
+      function removeAt(index) { setImages(prev => prev.filter((_, i) => i !== index)); }
+
+      // 備份/還原
+      function makeBackupJSON() { return JSON.stringify({ images, settings: { cols, gap, bg, showIndex, ratio, round } }, null, 2); }
+      function exportJSON() {
+        try {
+          const data = makeBackupJSON();
+          const blob = new Blob([data], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const ts = new Date(); const pad = (n)=>String(n).padStart(2,'0');
+          a.href = url;
+          a.download = `ig-grid-backup_${ts.getFullYear()}-${pad(ts.getMonth()+1)}-${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}.json`;
+          document.body.appendChild(a);
+          a.click();
+          setTimeout(()=>{ a.remove(); URL.revokeObjectURL(url); }, 1000);
+        } catch {
+          alert("這個環境擋了自動下載，請用「顯示備份文字」或「複製備份」。");
+        }
+      }
+      async function copyBackup() {
+        const data = makeBackupJSON();
+        try { await navigator.clipboard.writeText(data); alert("已複製備份到剪貼簿！"); }
+        catch { setShowBackup(true); setBackupText(data); alert("瀏覽器擋了自動複製，已展開備份文字，請手動複製。"); }
+      }
+      function importJSON(e) {
+        const file = e.target.files?.[0]; if (!file) return; const r = new FileReader();
+        r.onload = () => {
+          try {
+            const parsed = JSON.parse(r.result);
+            if (parsed && Array.isArray(parsed.images)) {
+              setImages(parsed.images);
+              const s = parsed.settings || {};
+              if (s.cols) setCols(s.cols);
+              if (typeof s.gap === 'number') setGap(s.gap);
+              if (s.bg) setBg(s.bg);
+              if (typeof s.showIndex === 'boolean') setShowIndex(s.showIndex);
+              if (s.ratio) setRatio(s.ratio);
+              if (typeof s.round === 'boolean') setRound(s.round);
+            } else if (Array.isArray(parsed)) {
+              setImages(parsed);
+            } else {
+              alert("JSON 格式不正確");
+            }
+          } catch(err){ alert("讀取失敗：" + err.message); }
+        };
+        r.readAsText(file);
+        e.target.value = "";
+      }
+
+      // 匯出 PNG（1080 寬）
+      function exportPNG() {
+        if (!images.length) return alert("沒有圖片可匯出");
+        const W = 1080, columns = cols, tileGap = gap;
+        const totalGap = tileGap * (columns - 1);
+        const tileW = Math.floor((W - totalGap) / columns);
+        const tileH = ratioToHeight(tileW, ratio);
+        const rows = Math.ceil(images.length / columns);
+        const H = tileH*rows + tileGap*(rows-1);
+
+        const canvas = document.createElement('canvas'); canvas.width=W; canvas.height=H; const ctx = canvas.getContext('2d');
+        ctx.fillStyle = bg === 'black' ? '#000' : bg === 'gray' ? '#e5e5e5' : '#fff'; ctx.fillRect(0,0,W,H);
+
+        const drawPromises = images.map((item, idx) => new Promise((res) => {
+          const img = new Image(); img.crossOrigin = 'anonymous';
+          img.onload = () => {
+            const col = idx % columns, row = Math.floor(idx / columns);
+            const x = col*(tileW+tileGap), y = row*(tileH+tileGap);
+            const dstRatio = tileW / tileH; const srcRatio = img.width / img.height;
+            let sx,sy,sw,sh;
+            if (srcRatio > dstRatio) { sh = img.height; sw = sh*dstRatio; sx = (img.width - sw)/2; sy = 0; }
+            else { sw = img.width; sh = sw/dstRatio; sx = 0; sy = (img.height - sh)/2; }
+            ctx.drawImage(img, sx, sy, sw, sh, x, y, tileW, tileH);
+            res();
+          };
+          img.src = item.url;
+        }));
+
+        Promise.all(drawPromises).then(() => {
+          canvas.toBlob((blob) => {
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a'); a.href=url; a.download='ig-grid.png'; a.click();
+            URL.revokeObjectURL(url);
+          }, 'image/png');
         });
-        Promise.all(readers).then(newImgs => setImages([...images, ...newImgs]));
       }
 
-      function removeImage(idx) {
-        setImages(images.filter((_, i) => i !== idx));
-      }
+      const bgClass = bg === "white" ? "bg-white" : bg === "black" ? "bg-black" : "bg-neutral-200";
+      const textOnBg = bg === "black" ? "text-white" : "text-neutral-900";
 
       return (
-        <div className="max-w-md mx-auto bg-white rounded-xl shadow-lg p-4 space-y-4">
-          <h1 className="text-lg font-bold">IG 排版小工具</h1>
-          <input
-            type="file"
-            ref={fileRef}
-            multiple
-            accept="image/*"
-            className="hidden"
-            onChange={handleFiles}
-          />
-          <button className="px-3 py-2 bg-blue-500 text-white rounded" onClick={() => fileRef.current.click()}>
-            上傳圖片
-          </button>
-          <div className="grid grid-cols-3 gap-2">
-            {images.map((img, i) => (
-              <div key={img.id} className="relative border rounded overflow-hidden">
-                <img src={img.src} alt="" className="w-full h-full object-cover" />
-                <button
-                  className="absolute top-1 right-1 bg-red-500 text-white rounded px-1"
-                  onClick={() => removeImage(i)}
-                >
-                  ×
-                </button>
+        <div className={`min-h-screen ${bgClass} p-4 sm:p-6`}>
+          <div className="max-w-6xl mx-auto grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-4">
+            {/* 左側控制 */}
+            <section className={`lg:col-span-1 ${textOnBg}`}>
+              <h1 className="text-2xl font-semibold mb-3">IG 排版小網頁（完整版）</h1>
+              <p className="text-sm opacity-80 mb-4">
+                重新整理也不會消失（localStorage）。拖到外框新增、拖到格子替換；左上「≡」把手拖曳可重排；右上「×」刪除。
+              </p>
+
+              <div className="space-y-4">
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={()=>fileInputRef.current?.click()} className="px-3 py-2 rounded-2xl border">上傳圖片</button>
+                  <button onClick={exportJSON} className="px-3 py-2 rounded-2xl border">下載備份（JSON，含圖片）</button>
+                  <button onClick={()=>{ setShowBackup(v=>!v); if(!showBackup) setBackupText(makeBackupJSON()); }} className="px-3 py-2 rounded-2xl border">
+                    {showBackup ? '隱藏備份文字' : '顯示備份文字'}
+                  </button>
+                  <button onClick={copyBackup} className="px-3 py-2 rounded-2xl border">複製備份</button>
+                  <label className="px-3 py-2 rounded-2xl border cursor-pointer">
+                    匯入 JSON
+                    <input type="file" accept="application/json" className="hidden" onChange={importJSON} />
+                  </label>
+                  <button onClick={exportPNG} className="px-3 py-2 rounded-2xl border">匯出 PNG</button>
+                </div>
+
+                <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={onFilesSelected} />
+
+                {/* 欄數 */}
+                <div>
+                  <div className="text-sm mb-1">欄數（Columns）</div>
+                  <div className="flex gap-2">
+                    {[3,4,5].map(n => (
+                      <button key={n} onClick={() => setCols(n)} className={`px-3 py-2 rounded-xl border ${cols===n?'ring-2 ring-blue-500':'opacity-80 hover:opacity-100'}`}>{n}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 間距 */}
+                <div>
+                  <div className="text-sm mb-1">間距（Gap）: {gap}px</div>
+                  <input type="range" min={0} max={24} value={gap} onChange={(e)=>setGap(parseInt(e.target.value))} className="w-full" />
+                </div>
+
+                {/* 比例 */}
+                <div>
+                  <div className="text-sm mb-1">比例（Aspect Ratio）</div>
+                  <div className="flex flex-wrap gap-2">
+                    {["1:1","4:5","16:9","9:16","original"].map(r => (
+                      <button key={r} onClick={()=>setRatio(r)} className={`px-3 py-2 rounded-xl border ${ratio===r?'ring-2 ring-blue-500':'opacity-80 hover:opacity-100'}`}>{r}</button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* 背景/其他 */}
+                <div>
+                  <div className="text-sm mb-1">背景（Background）</div>
+                  <div className="flex gap-2">
+                    {[{k:'white',label:'白'},{k:'gray',label:'灰'},{k:'black',label:'黑'}].map(b => (
+                      <button key={b.k} onClick={()=>setBg(b.k)} className={`px-3 py-2 rounded-xl border ${bg===b.k?'ring-2 ring-blue-500':'opacity-80 hover:opacity-100'}`}>{b.label}</button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input id="idx" type="checkbox" checked={showIndex} onChange={(e)=>setShowIndex(e.target.checked)} />
+                  <label htmlFor="idx" className="text-sm">顯示序號（最底部為 #1）</label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input id="round" type="checkbox" checked={round} onChange={(e)=>setRound(e.target.checked)} />
+                  <label htmlFor="round" className="text-sm">圓角</label>
+                </div>
+
+                {showBackup && (
+                  <div className="border rounded-xl p-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm opacity-80">備份內容（純文字，可手動複製存檔）</div>
+                      <div className="flex gap-2">
+                        <button onClick={()=>setBackupText(makeBackupJSON())} className="px-2 py-1 text-xs rounded border">刷新</button>
+                        <button onClick={() => { const el = document.getElementById('backup-textarea'); if (el) { el.focus(); el.select(); document.execCommand('copy'); alert('已複製！'); } }} className="px-2 py-1 text-xs rounded border">全選並複製</button>
+                      </div>
+                    </div>
+                    <textarea id="backup-textarea" value={backupText} onChange={(e)=>setBackupText(e.target.value)} className="w-full h-40 text-xs font-mono bg-transparent border rounded p-2" readOnly />
+                  </div>
+                )}
               </div>
-            ))}
+            </section>
+
+            {/* 右側預覽 */}
+            <section className="lg:col-span-3">
+              <PreviewGrid
+                images={images}
+                cols={cols}
+                gap={gap}
+                ratio={ratio}
+                round={round}
+                showIndex={showIndex}
+                onDropFiles={onDropFiles}
+                onCardDragStart={onCardDragStart}
+                onCardDrop={onCardDrop}
+                onReplaceClick={(i)=>{ setReplaceIndex(i); fileInputRef.current?.click(); }}
+                onRemove={removeAt}
+              />
+            </section>
           </div>
         </div>
       );
     }
 
-    ReactDOM.render(<App />, document.getElementById("root"));
+    function PreviewGrid({ images, cols, gap, ratio, round, showIndex, onDropFiles, onCardDragStart, onCardDrop, onReplaceClick, onRemove }) {
+      const colStyle = { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, gap: `${gap}px` };
+      const [dropActive, setDropActive] = React.useState(false);
+
+      return (
+        <div className="w-full">
+          <div className="mx-auto max-w-[480px] bg-white rounded-3xl p-4 shadow-xl">
+            <div className="text-center text-sm font-medium mb-3">IG Grid 預覽</div>
+            <div
+              className={`border rounded-2xl p-2 relative ${dropActive ? 'ring-2 ring-blue-500 ring-offset-2' : ''}`}
+              onDragEnter={(e)=>{ e.preventDefault(); e.stopPropagation(); setDropActive(true); }}
+              onDragOver={(e)=>{ e.preventDefault(); e.stopPropagation(); }}
+              onDragLeave={(e)=>{ e.preventDefault(); e.stopPropagation(); setDropActive(false); }}
+              onDrop={(e)=>{ e.preventDefault(); e.stopPropagation(); onDropFiles(e, null); setDropActive(false); }}
+            >
+              {dropActive && <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/70 rounded-xl text-sm">把圖片拖到這裡新增</div>}
+
+              <div className="grid" style={colStyle}>
+                {images.length === 0 && (
+                  <div className="col-span-full text-center text-sm text-neutral-500 py-12">尚未上傳圖片（或直接拖進來）</div>
+                )}
+
+                {images.map((img, i) => (
+                  <GridItem
+                    key={img.id}
+                    img={img}
+                    index={i}
+                    total={images.length}
+                    ratio={ratio}
+                    round={round}
+                    showIndex={showIndex}
+                    onCardDragStart={onCardDragStart}
+                    onCardDrop={onCardDrop}
+                    onReplaceClick={() => onReplaceClick(i)}
+                    onRemove={() => onRemove(i)}
+                    onDropFiles={onDropFiles}
+                  />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function GridItem({ img, index, total, ratio, round, showIndex, onCardDragStart, onCardDrop, onReplaceClick, onRemove, onDropFiles }) {
+      const displayNumber = total - index; // 最底部 = #1
+      return (
+        <div
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => onDropFiles(e, index)}
+          className={`relative select-none ${round ? "rounded-xl" : "rounded-none"} overflow-hidden border group`}
+          title={`第 ${displayNumber} 張（把檔案拖進來可替換）`}
+        >
+          {/* 把手拖曳 */}
+          <div draggable onDragStart={(e)=>onCardDragStart(e, index)} className="absolute top-1 left-1 z-10 px-2 py-1 text-[10px] bg-black/60 text-white rounded cursor-grab active:cursor-grabbing">≡</div>
+          {/* 刪除 */}
+          <button onClick={(e)=>{ e.stopPropagation(); onRemove(); }} className="absolute top-1 right-1 z-10 w-6 h-6 leading-6 text-center text-xs bg-black/60 text-white rounded-full hover:bg-black">×</button>
+          {/* 點擊替換 */}
+          <button onClick={(e)=>{ e.stopPropagation(); onReplaceClick(index); }} className="absolute bottom-1 right-1 z-10 px-2 py-1 text-[10px] bg-black/60 text-white rounded">替換</button>
+
+          <RatioBox ratio={ratio}>
+            <img src={img.url} alt="" className="w-full h-full object-cover" />
+          </RatioBox>
+
+          {showIndex && (<div className="absolute bottom-1 left-1 text-[11px] px-1.5 py-0.5 bg-black/60 text-white rounded-full">#{displayNumber}</div>)}
+        </div>
+      );
+    }
+
+    // 比例輔助
+    function ratioToPct(r) {
+      switch (r) {
+        case '1:1': return '100%';
+        case '4:5': return `${(5/4)*100}%`;
+        case '16:9': return `${(9/16)*100}%`;
+        case '9:16': return `${(16/9)*100}%`;
+        default: return '100%';
+      }
+    }
+    function ratioToHeight(w, r) {
+      switch (r) {
+        case '1:1': return w;
+        case '4:5': return Math.round(w*5/4);
+        case '16:9': return Math.round(w*9/16);
+        case '9:16': return Math.round(w*16/9);
+        default: return w;
+      }
+    }
+
+    function RatioBox({ ratio, children }) {
+      if (ratio === "original") return <div className="w-full">{children}</div>;
+      const pct = ratioToPct(ratio);
+      return (
+        <>
+          <div className="w-full relative" style={{ paddingTop: pct }}>
+            <div className="absolute inset-0">{children}</div>
+          </div>
+        </>
+      );
+    }
+
+    // 簡單自我測試（console）
+    (function runDevTests() {
+      try {
+        console.assert(ratioToPct('1:1') === '100%');
+        console.assert(ratioToPct('4:5').startsWith('125'));
+        console.assert(ratioToHeight(100, '1:1') === 100);
+        console.assert(ratioToHeight(100, '4:5') === 125);
+        console.log('%cDev tests passed', 'color:green');
+      } catch (e) { console.warn('Dev tests failed', e); }
+    })();
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<IGGridApp />);
   </script>
 </body>
 </html>
