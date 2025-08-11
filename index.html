@@ -433,7 +433,7 @@
       return (
         <div
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => onCardDrop(e, index)}  <!-- 關鍵修正：用 onCardDrop 同時支援排序＆替換 -->
+          onDrop={(e) => onCardDrop(e, index)} // 關鍵：用 onCardDrop 同時支援排序＆替換
           className={`relative select-none ${round ? "rounded-xl" : "rounded-none"} overflow-hidden border group`}
           title={`第 ${displayNumber} 張（把檔案拖進來可替換；拖把手可排序）`}
         >
