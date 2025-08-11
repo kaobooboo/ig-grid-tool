@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IG 排版小工具</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script crossorigin src="https://unpkg.com/react@17/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+</head>
+<body class="bg-gray-100 p-4">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useEffect } = React;
+
+    function App() {
+      const [images, setImages] = useState(() => {
+        const saved = localStorage.getItem("igGridImages");
+        return saved ? JSON.parse(saved) : [];
+      });
+      const fileRef = useRef();
+
+      useEffect(() => {
+        localStorage.setItem("igGridImages", JSON.stringify(images));
+      }, [images]);
+
+      function handleFiles(e) {
+        const files = Array.from(e.target.files);
+        const readers = files.map(file => {
+          return new Promise(res => {
+            const reader = new FileReader();
+            reader.onload = ev => res({ id: Date.now() + Math.random(), src: ev.target.result });
+            reader.readAsDataURL(file);
+          });
+        });
+        Promise.all(readers).then(newImgs => setImages([...images, ...newImgs]));
+      }
+
+      function removeImage(idx) {
+        setImages(images.filter((_, i) => i !== idx));
+      }
+
+      return (
+        <div className="max-w-md mx-auto bg-white rounded-xl shadow-lg p-4 space-y-4">
+          <h1 className="text-lg font-bold">IG 排版小工具</h1>
+          <input
+            type="file"
+            ref={fileRef}
+            multiple
+            accept="image/*"
+            className="hidden"
+            onChange={handleFiles}
+          />
+          <button className="px-3 py-2 bg-blue-500 text-white rounded" onClick={() => fileRef.current.click()}>
+            上傳圖片
+          </button>
+          <div className="grid grid-cols-3 gap-2">
+            {images.map((img, i) => (
+              <div key={img.id} className="relative border rounded overflow-hidden">
+                <img src={img.src} alt="" className="w-full h-full object-cover" />
+                <button
+                  className="absolute top-1 right-1 bg-red-500 text-white rounded px-1"
+                  onClick={() => removeImage(i)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    ReactDOM.render(<App />, document.getElementById("root"));
+  </script>
+</body>
+</html>
