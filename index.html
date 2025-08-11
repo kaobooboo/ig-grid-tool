@@ -1,9 +1,10 @@
+
 <!doctype html>
 <html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>IG 排版小網頁 – 儲存檔版（修正版）</title>
+  <title>IG 排版小網頁 – 儲存檔版（含壓縮上傳）</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -15,18 +16,15 @@
   <script type="text/babel">
     const { useEffect, useRef, useState } = React;
 
-    // localStorage keys
-    const LS_PROFILES = "ig-grid-profiles";     // { [name]: {images, settings} }
-    const LS_LAST     = "ig-grid-last-profile"; // "profileName"
+    const LS_PROFILES = "ig-grid-profiles";
+    const LS_LAST     = "ig-grid-last-profile";
 
-    // 讀/寫 profiles（同步＋防呆）
     function readProfiles() {
       try {
         const raw = localStorage.getItem(LS_PROFILES);
         const obj = raw ? JSON.parse(raw) : {};
         return { profiles: obj, names: Object.keys(obj).sort() };
       } catch (e) {
-        console.error("readProfiles failed", e);
         return { profiles: {}, names: [] };
       }
     }
@@ -35,30 +33,47 @@
         localStorage.setItem(LS_PROFILES, JSON.stringify(next));
         return true;
       } catch (e) {
-        console.error("saveProfiles failed", e);
         alert("儲存失敗：可能是瀏覽器儲存空間不足。請刪掉不需要的檔或減少圖片數量。");
         return false;
       }
     }
 
+    async function readAndCompress(file, maxSide = 1080, quality = 0.85) {
+      const dataURL = await new Promise(res => {
+        const r = new FileReader();
+        r.onload = () => res(r.result);
+        r.readAsDataURL(file);
+      });
+      const img = await new Promise(res => {
+        const i = new Image();
+        i.onload = () => res(i);
+        i.src = dataURL;
+      });
+      const scale = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const cw = Math.round(img.width * scale);
+      const ch = Math.round(img.height * scale);
+      const canvas = document.createElement('canvas');
+      canvas.width = cw; canvas.height = ch;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, cw, ch);
+      return canvas.toDataURL('image/jpeg', quality);
+    }
+
     function IGGridApp() {
-      // 畫面狀態
-      const [images, setImages] = useState([]); // {id, url}
+      const [images, setImages] = useState([]);
       const [cols, setCols] = useState(3);
       const [gap, setGap] = useState(8);
       const [bg, setBg] = useState("white");
       const [showIndex, setShowIndex] = useState(true);
-      const [ratio, setRatio] = useState("1:1"); // 1:1 | 4:5 | 16:9 | 9:16 | original
+      const [ratio, setRatio] = useState("1:1");
       const [round, setRound] = useState(true);
 
-      // 儲存檔狀態
-      const [currentProfile, setCurrentProfile] = useState(""); // 目前載入的檔名
-      const [allNames, setAllNames] = useState([]);             // 所有檔名清單
+      const [currentProfile, setCurrentProfile] = useState("");
+      const [allNames, setAllNames] = useState([]);
 
       const [replaceIndex, setReplaceIndex] = useState(null);
       const fileInputRef = useRef(null);
 
-      // 啟動時：載入最後一次使用的檔案
       useEffect(() => {
         const { profiles, names } = readProfiles();
         setAllNames(names);
@@ -68,12 +83,10 @@
         }
       }, []);
 
-      // 把目前畫面組成 payload
       function makePayload() {
         return { images, settings: { cols, gap, bg, showIndex, ratio, round } };
       }
 
-      // 從 payload 載入到畫面
       function loadFromProfile(payload, name="") {
         if (!payload) return;
         setImages(Array.isArray(payload.images) ? payload.images : []);
@@ -88,21 +101,19 @@
         if (name) localStorage.setItem(LS_LAST, name);
       }
 
-      // 另存為（新檔或覆蓋新名）
       function saveAs() {
         const name = prompt("請輸入要儲存的檔名：", currentProfile || "");
         if (!name) return;
         const { profiles } = readProfiles();
         profiles[name] = makePayload();
         if (saveProfiles(profiles)) {
-          setAllNames(Object.keys(profiles).sort()); // 立刻更新下拉
+          setAllNames(Object.keys(profiles).sort());
           setCurrentProfile(name);
           localStorage.setItem(LS_LAST, name);
           alert(`已儲存為「${name}」`);
         }
       }
 
-      // 更新目前儲存（若尚未命名則視為另存為）
       function saveUpdate() {
         const name = currentProfile || prompt("請輸入要儲存的檔名：", "");
         if (!name) return;
@@ -116,7 +127,6 @@
         }
       }
 
-      // 切換載入
       function onSelectProfile(e) {
         const name = e.target.value;
         if (!name) return;
@@ -124,7 +134,6 @@
         if (profiles[name]) loadFromProfile(profiles[name], name);
       }
 
-      // 刪除檔（不清空畫面）
       function deleteProfile() {
         if (!currentProfile) return alert("目前沒有已命名的檔可刪除。");
         if (!confirm(`確定刪除「${currentProfile}」嗎？`)) return;
@@ -138,7 +147,22 @@
         }
       }
 
-      // 下載備份（離線）
+      function clearAllImages() {
+        if (!confirm("清空目前畫面所有圖片？")) return;
+        setImages([]);
+      }
+      function clearStorage() {
+        if (!confirm("刪除所有命名儲存檔？（不可復原）")) return;
+        try {
+          localStorage.removeItem(LS_PROFILES);
+          localStorage.removeItem(LS_LAST);
+        } catch (e) {}
+        const { names } = readProfiles();
+        setAllNames(names);
+        setCurrentProfile("");
+        alert("已清除儲存空間。");
+      }
+
       function exportJSON() {
         try {
           const data = JSON.stringify(makePayload(), null, 2);
@@ -155,7 +179,6 @@
         } catch {}
       }
 
-      // 匯入備份（匯入到畫面；不自動另存）
       function importJSON(e) {
         const file = e.target.files?.[0]; if (!file) return;
         const r = new FileReader();
@@ -176,22 +199,20 @@
         e.target.value = "";
       }
 
-      // 檔案處理
       async function addFiles(files) {
         const list = Array.from(files || []);
         if (!list.length) return;
-        const items = await Promise.all(list.map(f => new Promise(res => {
-          const r = new FileReader();
-          r.onload = () => res({ id: crypto?.randomUUID?.() ?? String(Math.random()), url: r.result });
-          r.readAsDataURL(f);
-        })));
+        const items = await Promise.all(list.map(async f => {
+          const url = await readAndCompress(f, 1080, 0.85);
+          return { id: crypto?.randomUUID?.() ?? String(Math.random()), url };
+        }));
         setImages(prev => [...prev, ...items]);
       }
-      function replaceFilesAt(index, files) {
+      async function replaceFilesAt(index, files) {
         const list = Array.from(files || []); if (!list.length) return;
-        const f = list[0]; const r = new FileReader();
-        r.onload = () => setImages(prev => prev.map((it, i) => i === index ? { ...it, url: r.result } : it));
-        r.readAsDataURL(f);
+        const f = list[0];
+        const url = await readAndCompress(f, 1080, 0.85);
+        setImages(prev => prev.map((it, i) => i === index ? { ...it, url } : it));
       }
       function onFilesSelected(e) {
         const files = e.target.files;
@@ -206,7 +227,6 @@
         e.target.value = "";
       }
 
-      // 拖曳：新增/替換 + 把手重排
       function onDropFiles(e, targetIndex = null) {
         e.preventDefault();
         const files = Array.from(e.dataTransfer?.files || []);
@@ -220,10 +240,8 @@
       }
       function onCardDrop(e, overIndex) {
         e.preventDefault();
-        // 1) 若有檔案，則為「替換」
         const files = e.dataTransfer?.files;
         if (files && files.length) { replaceFilesAt(overIndex, files); return; }
-        // 2) 否則為「卡片排序」
         const payload = e.dataTransfer.getData('text/ig-card');
         if (payload !== null && payload !== '') {
           const fromIndex = Number(payload);
@@ -239,7 +257,6 @@
       }
       function removeAt(index) { setImages(prev => prev.filter((_, i) => i !== index)); }
 
-      // 匯出 PNG
       function exportPNG() {
         if (!images.length) return alert("沒有圖片可匯出");
         const W = 1080, columns = cols, tileGap = gap;
@@ -248,10 +265,8 @@
         const tileH = ratioToHeight(tileW, ratio);
         const rows = Math.ceil(images.length / columns);
         const H = tileH*rows + tileGap*(rows-1);
-
         const canvas = document.createElement('canvas'); canvas.width=W; canvas.height=H; const ctx = canvas.getContext('2d');
         ctx.fillStyle = bg === 'black' ? '#000' : bg === 'gray' ? '#e5e5e5' : '#fff'; ctx.fillRect(0,0,W,H);
-
         const drawPromises = images.map((item, idx) => new Promise((res) => {
           const img = new Image(); img.crossOrigin = 'anonymous';
           img.onload = () => {
@@ -266,7 +281,6 @@
           };
           img.src = item.url;
         }));
-
         Promise.all(drawPromises).then(() => {
           canvas.toBlob((blob) => {
             const url = URL.createObjectURL(blob);
@@ -282,15 +296,11 @@
       return (
         <div className={`min-h-screen ${bgClass} p-4 sm:p-6`}>
           <div className="max-w-6xl mx-auto grid gap-4 sm:gap-6 grid-cols-1 lg:grid-cols-4">
-            {/* 左側控制 */}
             <section className={`lg:col-span-1 ${textOnBg}`}>
-              <h1 className="text-2xl font-semibold mb-3">IG 排版小網頁（儲存檔）</h1>
-              <p className="text-sm opacity-80 mb-4">
-                可把目前排版「命名後儲存」，下拉選單可載入再編輯。拖到外框新增、拖到格子替換；左上「≡」把手重排。
-              </p>
+              <h1 className="text-2xl font-semibold mb-3">IG 排版小網頁（儲存檔＋壓縮上傳）</h1>
+              <p className="text-sm opacity-80 mb-4">圖片上傳自動壓縮到 1080px；可命名儲存、載入、刪除。</p>
 
               <div className="space-y-4">
-                {/* 儲存檔操作 */}
                 <div className="flex items-center gap-2 flex-wrap">
                   <label className="text-sm">載入：</label>
                   <select value={currentProfile} onChange={onSelectProfile} className="px-2 py-1 rounded border bg-white">
@@ -302,7 +312,6 @@
                   <button onClick={deleteProfile} className="px-3 py-2 rounded-2xl border">刪除</button>
                 </div>
 
-                {/* 檔案與匯出 */}
                 <div className="flex gap-2 flex-wrap">
                   <button onClick={()=>fileInputRef.current?.click()} className="px-3 py-2 rounded-2xl border">上傳圖片</button>
                   <label className="px-3 py-2 rounded-2xl border cursor-pointer">
@@ -313,9 +322,13 @@
                   <button onClick={exportPNG} className="px-3 py-2 rounded-2xl border">匯出 PNG</button>
                 </div>
 
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={()=>{ if(confirm('清空目前畫面所有圖片？')) setImages([]); }} className="px-3 py-2 rounded-2xl border">清空所有圖片</button>
+                  <button onClick={()=>{ if(confirm('刪除所有命名儲存檔？（不可復原）')) { localStorage.removeItem(LS_PROFILES); localStorage.removeItem(LS_LAST); const { names } = readProfiles(); setAllNames(names); setCurrentProfile(''); alert('已清除儲存空間。'); } }} className="px-3 py-2 rounded-2xl border">清除儲存空間</button>
+                </div>
+
                 <input ref={fileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={onFilesSelected} />
 
-                {/* 欄數 */}
                 <div>
                   <div className="text-sm mb-1">欄數（Columns）</div>
                   <div className="flex gap-2">
@@ -325,13 +338,11 @@
                   </div>
                 </div>
 
-                {/* 間距 */}
                 <div>
                   <div className="text-sm mb-1">間距（Gap）: {gap}px</div>
                   <input type="range" min={0} max={24} value={gap} onChange={(e)=>setGap(parseInt(e.target.value))} className="w-full" />
                 </div>
 
-                {/* 比例 */}
                 <div>
                   <div className="text-sm mb-1">比例（Aspect Ratio）</div>
                   <div className="flex flex-wrap gap-2">
@@ -341,7 +352,6 @@
                   </div>
                 </div>
 
-                {/* 背景/其他 */}
                 <div>
                   <div className="text-sm mb-1">背景（Background）</div>
                   <div className="flex gap-2">
@@ -362,7 +372,6 @@
               </div>
             </section>
 
-            {/* 右側預覽 */}
             <section className="lg:col-span-3">
               <PreviewGrid
                 images={images}
@@ -389,7 +398,7 @@
 
       return (
         <div className="w-full">
-          <div className="mx-auto max-w-[480px] bg-white rounded-3xl p-4 shadow-xl">
+          <div className="mx-auto max-w-[480px] bg白 rounded-3xl p-4 shadow-xl">
             <div className="text-center text-sm font-medium mb-3">IG Grid 預覽</div>
             <div
               className={`border rounded-2xl p-2 relative ${dropActive ? 'ring-2 ring-blue-500 ring-offset-2' : ''}`}
@@ -418,7 +427,6 @@
                     onCardDrop={onCardDrop}
                     onReplaceClick={() => onReplaceClick(i)}
                     onRemove={() => onRemove(i)}
-                    onDropFiles={onDropFiles}
                   />
                 ))}
               </div>
@@ -428,20 +436,17 @@
       );
     }
 
-    function GridItem({ img, index, total, ratio, round, showIndex, onCardDragStart, onCardDrop, onReplaceClick, onRemove, onDropFiles }) {
-      const displayNumber = total - index; // 最底部 = #1
+    function GridItem({ img, index, total, ratio, round, showIndex, onCardDragStart, onCardDrop, onReplaceClick, onRemove }) {
+      const displayNumber = total - index;
       return (
         <div
           onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => onCardDrop(e, index)} // 關鍵：用 onCardDrop 同時支援排序＆替換
+          onDrop={(e) => onCardDrop(e, index)}
           className={`relative select-none ${round ? "rounded-xl" : "rounded-none"} overflow-hidden border group`}
           title={`第 ${displayNumber} 張（把檔案拖進來可替換；拖把手可排序）`}
         >
-          {/* 把手拖曳（拖這顆才會排序） */}
           <div draggable onDragStart={(e)=>onCardDragStart(e, index)} className="absolute top-1 left-1 z-10 px-2 py-1 text-[10px] bg-black/60 text-white rounded cursor-grab active:cursor-grabbing">≡</div>
-          {/* 刪除 */}
-          <button onClick={(e)=>{ e.stopPropagation(); onRemove(); }} className="absolute top-1 right-1 z-10 w-6 h-6 leading-6 text-center text-xs bg-black/60 text-white rounded-full hover:bg-black">×</button>
-          {/* 點擊替換（檔案選擇器） */}
+          <button onClick={(e)=>{ e.stopPropagation(); onRemove(); }} className="absolute top-1 right-1 z-10 w-6 h-6 leading-6 text-center text-xs bg-black/60 text白 rounded-full hover:bg-black">×</button>
           <button onClick={(e)=>{ e.stopPropagation(); onReplaceClick(index); }} className="absolute bottom-1 right-1 z-10 px-2 py-1 text-[10px] bg-black/60 text-white rounded">替換</button>
 
           <RatioBox ratio={ratio}>
@@ -453,7 +458,6 @@
       );
     }
 
-    // 比例輔助 & 容器
     function ratioToHeight(w, r) {
       switch (r) {
         case '1:1': return w;
